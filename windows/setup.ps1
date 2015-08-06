@@ -17,14 +17,40 @@
 # WANT_JSON
 # POWERSHELL_COMMON
 
-# $params is not currently used in this module
-# $params = Parse-Args $args;
+# enabled $params (David O'Brien, 06/08/2015)
+$params = Parse-Args $args;
+
+
+Function Get-CustomFacts {
+  [cmdletBinding()]
+  param (
+    [Parameter(mandatory=$false)]
+    $factspath = $null  
+  )
+
+  if (-not (Test-Path -Path $factspath)) {
+    break
+  }
+
+  $FactsFiles = Get-ChildItem -Path $factspath | Where-Object -FilterScript {($PSItem.PSIsContainer -eq $false) -and ($PSItem.Extension -eq '.ps1')}
+
+  foreach ($FactsFile in $FactsFiles) {
+      $return = Invoke-Expression -Command "powershell.exe -File $($FactsFile.FullName) -ExecutionPolicy Bypass"
+      Set-Attr $result.ansible_facts "ansible_$(($FactsFile.Name).Split('.')[0])" $return
+      $return = $null
+  }
+}
 
 $result = New-Object psobject @{
     ansible_facts = New-Object psobject
     changed = $false
 };
 
+If ($params.facts_path) {
+  $factspath = $params.facts_path
+}
+
+$win32_os = Get-WmiObject Win32_OperatingSystem
 $osversion = [Environment]::OSVersion
 $memory = @()
 $memory += Get-WmiObject win32_Physicalmemory
@@ -53,10 +79,13 @@ foreach ($adapter in $ActiveNetcfg)
 
 Set-Attr $result.ansible_facts "ansible_interfaces" $formattednetcfg
 
+Set-Attr $result.ansible_facts "ansible_architecture" $win32_os.OSArchitecture 
+
 Set-Attr $result.ansible_facts "ansible_hostname" $env:COMPUTERNAME;
 Set-Attr $result.ansible_facts "ansible_fqdn" "$([System.Net.Dns]::GetHostByName((hostname)).HostName)"
 Set-Attr $result.ansible_facts "ansible_system" $osversion.Platform.ToString()
 Set-Attr $result.ansible_facts "ansible_os_family" "Windows"
+Set-Attr $result.ansible_facts "ansible_os_name" $win32_os.Name.Split('|')[0]
 Set-Attr $result.ansible_facts "ansible_distribution" $osversion.VersionString
 Set-Attr $result.ansible_facts "ansible_distribution_version" $osversion.Version.ToString()
 
@@ -96,5 +125,8 @@ if ($winrm_cert_expiry)
 {
     Set-Attr $result.ansible_facts "ansible_winrm_certificate_expires" $winrm_cert_expiry.NotAfter.ToString("yyyy-MM-dd HH:mm:ss")
 }
+
+# Get any custom facts
+Get-CustomFacts
 
 Exit-Json $result;
